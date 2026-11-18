@@ -1,0 +1,77 @@
+
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    name: Build Code App
+    runs-on: macos-26
+
+    steps:
+      # 1. 下载源码
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 2. 查看 Xcode 环境
+      - name: Show build environment
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      # 3. 下载项目所需的二进制 Framework
+      - name: Download frameworks
+        run: |
+          chmod +x ./downloadFrameworks.sh
+          ./downloadFrameworks.sh
+
+      # 4. 解析 Swift Package 依赖
+      - name: Resolve Swift packages
+        run: |
+          xcodebuild \
+            -resolvePackageDependencies \
+            -project Code.xcodeproj \
+            -target Code
+
+      # 5. 编译 iOS Release
+      - name: Build iOS App
+        run: |
+          xcodebuild \
+            -project Code.xcodeproj \
+            -target Code \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/CodeBuild" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build
+
+      # 6. 打包成未签名 IPA
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/CodeBuild/Build/Products/Release-iphoneos/Code.app"
+
+          test -d "$APP_PATH"
+
+          mkdir -p package/Payload
+          cp -R "$APP_PATH" package/Payload/
+
+          cd package
+          zip -qry "$GITHUB_WORKSPACE/CodeApp-unsigned.ipa" Payload
+
+      # 7. 上传构建产物
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: CodeApp-unsigned-IPA
+          path: CodeApp-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14
